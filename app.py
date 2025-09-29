@@ -27,14 +27,11 @@ load_dotenv()
 if os.environ.get('FLASK_ENV') != 'production':
     os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
-# Configure paths for the new folder structure
+# Configure paths for serverless deployment
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(current_dir)
-frontend_dir = os.path.join(project_root, 'frontend')
-template_dir = os.path.join(frontend_dir, 'templates')
-static_dir = os.path.join(frontend_dir, 'static')
 
-app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
+# For backend-only deployment, use default Flask paths
+app = Flask(__name__)
 
 # Enable CORS for cross-origin requests from frontend
 CORS(app, origins=["*"])  # In production, specify your frontend domain
@@ -507,8 +504,20 @@ class GoalForm(FlaskForm):
 
 @app.route('/')
 def index():
-    if not current_user.is_authenticated:
-        return render_template('landing.html')
+    """API root endpoint - returns JSON for backend-only deployment"""
+    return jsonify({
+        "message": "Goal Tracker Backend API",
+        "version": "1.0.0", 
+        "status": "running",
+        "authenticated": current_user.is_authenticated,
+        "endpoints": {
+            "health": "/health",
+            "login": "/login", 
+            "register": "/register",
+            "goals": "/api/goals",
+            "stats": "/api/stats"
+        }
+    })
 
     # Get filter parameters
     category_filter = request.args.get('category', '')
@@ -668,19 +677,30 @@ def bulk_action():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated:
-        return redirect(url_for('index'))
+        return jsonify({"message": "Already authenticated", "user": current_user.username})
 
-    form = LoginForm()
-    if form.validate_on_submit():
-        user = User.find_by_username(form.username.data)
-        if user and user.check_password(form.password.data):
-            login_user(user)
-            flash('Login successful!', 'success')
-            next_page = request.args.get('next')
-            return redirect(next_page) if next_page else redirect(url_for('index'))
-        flash('Invalid username or password!', 'danger')
+    if request.method == 'GET':
+        return jsonify({"message": "Send POST request with username and password"})
+    
+    # Handle JSON API login
+    if request.is_json:
+        data = request.get_json()
+        username = data.get('username')
+        password = data.get('password')
+    else:
+        # Handle form data
+        username = request.form.get('username')
+        password = request.form.get('password')
 
-    return render_template('login.html', form=form)
+    if not username or not password:
+        return jsonify({"error": "Username and password required"}), 400
+
+    user = User.find_by_username(username)
+    if user and user.check_password(password):
+        login_user(user)
+        return jsonify({"success": True, "message": "Login successful", "user": user.username})
+    
+    return jsonify({"error": "Invalid username or password"}), 401
 
 
 @app.route('/register', methods=['GET', 'POST'])
